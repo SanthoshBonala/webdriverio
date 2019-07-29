@@ -58,3 +58,49 @@ export function commandCallStructure (commandName, args) {
 
     return `${commandName}(${callArgs})`
 }
+
+/**
+ * checks if command argument is valid according to specificiation
+ *
+ * @param  {*}       arg           command argument
+ * @param  {Object}  expectedType  parameter type (e.g. `number`, `string[]` or `(number|string)`)
+ * @return {Boolean}               true if argument is valid
+ */
+export function isValidParameter (arg, expectedType) {
+    let shouldBeArray = false
+
+    if (expectedType.slice(-2) === '[]') {
+        expectedType = expectedType.slice(0, -2)
+        shouldBeArray = true
+    }
+
+    /**
+     * check type of each individual array element
+     */
+    if (shouldBeArray) {
+        if (!Array.isArray(arg)) {
+            return false
+        }
+    } else {
+        /**
+         * transform to array to have a unified check
+         */
+        arg = [arg]
+    }
+
+    for (const argEntity of arg) {
+        const argEntityType = getArgumentType(argEntity)
+        if (!argEntityType.match(expectedType)) {
+            return false
+        }
+    }
+
+    return true
+}
+
+/**
+ * get type of command argument
+ */
+export function getArgumentType (arg) {
+    return arg === null ? 'null' : typeof arg
+}
