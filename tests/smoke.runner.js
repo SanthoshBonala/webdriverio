@@ -1,9 +1,16 @@
-import fs from 'fs'
+import { readFile, unlink, exists } from 'fs'
 import path from 'path'
 import assert from 'assert'
+import { promisify } from 'util'
+
+const fs = {
+    readFile: promisify(readFile),
+    unlink: promisify(unlink),
+    exists: promisify(exists)
+}
 
 import launch from './helpers/launch'
-import { SERVICE_LOGS, LAUNCHER_LOGS, REPORTER_LOGS } from './helpers/fixtures'
+import { SERVICE_LOGS, LAUNCHER_LOGS, REPORTER_LOGS, JASMINE_REPORTER_LOGS } from './helpers/fixtures'
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -13,7 +20,13 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 const mochaTestrunner = async () => {
     await launch(
         path.resolve(__dirname, 'helpers', 'config.js'),
-        { specs: [path.resolve(__dirname, 'mocha', 'test.js')] })
+        {
+            specs: [
+                path.resolve(__dirname, 'mocha', 'test.js'),
+                path.resolve(__dirname, 'mocha', 'test-middleware.js'),
+                path.resolve(__dirname, 'mocha', 'test-waitForElement.js')
+            ]
+        })
 }
 /**
  * Jasmine wdio testrunner tests
@@ -25,6 +38,29 @@ const jasmineTestrunner = async () => {
             specs: [path.resolve(__dirname, 'jasmine', 'test.js')],
             framework: 'jasmine'
         })
+}
+
+/**
+ * Jasmine reporter
+ */
+const jasmineReporter = async () => {
+    try {
+        await launch(
+            path.resolve(__dirname, 'helpers', 'config.js'),
+            {
+                specs: [path.resolve(__dirname, 'jasmine', 'reporter.js')],
+                reporters: [['smoke-test', { foo: 'bar' }]],
+                framework: 'jasmine',
+                outputDir: __dirname + '/jasmine'
+            })
+    } catch (err) {
+        // expected failure
+    }
+    await sleep(100)
+    const reporterLogsPath = path.join(__dirname, 'jasmine', 'wdio-0-0-smoke-test-reporter.log')
+    const reporterLogs = await fs.readFile(reporterLogsPath)
+    assert.equal(reporterLogs.toString(), JASMINE_REPORTER_LOGS)
+    await fs.unlink(reporterLogsPath)
 }
 
 /**
@@ -75,9 +111,9 @@ const customService = async () => {
             services: [['smoke-test', { foo: 'bar' }]]
         })
     await sleep(100)
-    const serviceLogs = fs.readFileSync(path.join(__dirname, 'helpers', 'service.log'))
+    const serviceLogs = await fs.readFile(path.join(__dirname, 'helpers', 'service.log'))
     assert.equal(serviceLogs.toString(), SERVICE_LOGS)
-    const launcherLogs = fs.readFileSync(path.join(__dirname, 'helpers', 'launcher.log'))
+    const launcherLogs = await fs.readFile(path.join(__dirname, 'helpers', 'launcher.log'))
     assert.equal(launcherLogs.toString(), LAUNCHER_LOGS)
 }
 
@@ -93,9 +129,9 @@ const customReporterString = async () => {
         })
     await sleep(100)
     const reporterLogsPath = path.join(__dirname, 'helpers', 'wdio-0-0-smoke-test-reporter.log')
-    const reporterLogs = fs.readFileSync(reporterLogsPath)
+    const reporterLogs = await fs.readFile(reporterLogsPath)
     assert.equal(reporterLogs.toString(), REPORTER_LOGS)
-    fs.unlinkSync(reporterLogsPath)
+    await fs.unlink(reporterLogsPath)
 }
 
 /**
@@ -104,9 +140,18 @@ const customReporterString = async () => {
 const customReporterObject = async () => {
     await launch(path.resolve(__dirname, 'helpers', 'reporter.conf.js'), {})
     const reporterLogsWithReporterAsObjectPath = path.join(__dirname, 'helpers', 'wdio-0-0-CustomSmokeTestReporter-reporter.log')
-    const reporterLogsWithReporterAsObject = fs.readFileSync(reporterLogsWithReporterAsObjectPath)
-    assert.equal(reporterLogsWithReporterAsObject, REPORTER_LOGS)
-    fs.unlinkSync(reporterLogsWithReporterAsObjectPath)
+    const reporterLogsWithReporterAsObject = await fs.readFile(reporterLogsWithReporterAsObjectPath)
+    assert.equal(reporterLogsWithReporterAsObject.toString(), REPORTER_LOGS)
+    await fs.unlink(reporterLogsWithReporterAsObjectPath)
+}
+
+/**
+ * wdio test run with before/after Test/Hook
+ */
+const wdioHooks = async () => {
+    await launch(
+        path.resolve(__dirname, 'helpers', 'hooks.conf.js'),
+        { specs: [path.resolve(__dirname, 'mocha', 'wdio_hooks.js')] })
 }
 
 /**
@@ -153,15 +198,15 @@ const retryPass = async () => {
     let retryFilename = path.join(__dirname, '.retry_succeeded')
     let logfiles = ['wdio-0-0.log', 'wdio-0-1.log'].map(f => path.join(__dirname, f))
     let rmfiles = [retryFilename, ...logfiles]
-    rmfiles.forEach(filename => {
-        if (fs.existsSync(filename)) {
+    for (let filename of rmfiles) {
+        if (await fs.exists(filename)) {
             fs.unlink(filename, err => {
                 if (err) {
                     throw Error(`Unable to delete ${filename}`)
                 }
             })
         }
-    })
+    }
     await launch(
         path.resolve(__dirname, 'helpers', 'config.js'),
         {
@@ -170,10 +215,10 @@ const retryPass = async () => {
             specFileRetries: 1,
             retryFilename
         })
-    if (!fs.existsSync(logfiles[0])) {
+    if (!await fs.exists(logfiles[0])) {
         throw Error(`Expected ${logfiles[0]} to exist but it does not`)
     }
-    if (fs.existsSync(logfiles[1])) {
+    if (await fs.exists(logfiles[1])) {
         throw Error(`Expected ${logfiles[1]} to not exist but it does`)
     }
 }
@@ -187,6 +232,7 @@ const retryPass = async () => {
     const tests = [
         mochaTestrunner,
         jasmineTestrunner,
+        jasmineReporter,
         cucumberTestrunner,
         cucumberFailAmbiguousDefinitions,
         customService,
@@ -195,6 +241,7 @@ const retryPass = async () => {
         multiremote,
         retryFail,
         retryPass,
+        wdioHooks,
     ]
 
     if (process.env.CI || testFilter) {

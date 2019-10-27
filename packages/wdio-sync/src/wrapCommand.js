@@ -6,6 +6,28 @@ import { sanitizeErrorMessage } from './utils'
 
 const log = logger('@wdio/sync')
 
+let inCommandHook = false
+const timers = []
+const elements = new Set()
+
+/**
+ * resets `_NOT_FIBER` if Timer has timed out
+ */
+process.on('WDIO_TIMER', (payload) => {
+    if (payload.start) {
+        return timers.push(payload.id)
+    }
+    if (timers.includes(payload.id)) {
+        while (timers.pop() !== payload.id);
+    }
+    if (payload.timeout) {
+        elements.forEach(element => { delete element._NOT_FIBER })
+    }
+    if (timers.length === 0) {
+        elements.clear()
+    }
+})
+
 /**
  * wraps a function into a Fiber ready context to enable sync execution and hooks
  * @param  {Function}   fn             function to be executed
@@ -27,6 +49,13 @@ export default function wrapCommand (commandName, fn) {
         }
 
         /**
+         * store element if Timer is running to reset `_NOT_FIBER` if timeout has occurred
+         */
+        if (timers.length > 0) {
+            elements.add(this)
+        }
+
+        /**
          * Avoid running some functions in Future that are not in Fiber.
          */
         if (this._NOT_FIBER === true) {
@@ -35,9 +64,8 @@ export default function wrapCommand (commandName, fn) {
         }
         /**
          * all named nested functions run in parent Fiber context
-         * except of debug and waitUntil
          */
-        this._NOT_FIBER = fn.name !== '' && fn.name !== 'debug' && commandName !== 'waitUntil'
+        this._NOT_FIBER = fn.name !== ''
 
         const future = new Future()
 
@@ -78,10 +106,7 @@ async function runCommandWithHooks (commandName, fn, ...args) {
     // should be before any async calls
     const stackError = new Error()
 
-    await executeHooksWithArgs(
-        this.options.beforeCommand,
-        [commandName, args]
-    )
+    await runCommandHook.call(this, this.options.beforeCommand, [commandName, args])
 
     let commandResult
     let commandError
@@ -91,16 +116,21 @@ async function runCommandWithHooks (commandName, fn, ...args) {
         commandError = sanitizeErrorMessage(err, stackError)
     }
 
-    await executeHooksWithArgs(
-        this.options.afterCommand,
-        [commandName, args, commandResult, commandError]
-    )
+    await runCommandHook.call(this, this.options.afterCommand, [commandName, args, commandResult, commandError])
 
     if (commandError) {
         throw commandError
     }
 
     return commandResult
+}
+
+async function runCommandHook(hookFn, args) {
+    if (!inCommandHook) {
+        inCommandHook = true
+        await executeHooksWithArgs(hookFn, args)
+        inCommandHook = false
+    }
 }
 
 /**

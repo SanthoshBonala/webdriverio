@@ -3,7 +3,6 @@ const DEFAULT_TIMEOUT = 10000
 /* istanbul ignore next */
 
 export const DEFAULT_CONFIGS = {
-    sync: true,
     specs: [],
     suites: {},
     exclude: [],
@@ -22,7 +21,6 @@ export const DEFAULT_CONFIGS = {
     filesToWatch: [],
     connectionRetryTimeout: 90000,
     connectionRetryCount: 3,
-    debug: false,
     execArgv: [],
     runnerEnv: {},
     runner: 'local',
@@ -75,4 +73,11 @@ export const SUPPORTED_HOOKS = [
     'afterCommand', 'afterTest', 'afterHook', 'afterSuite', 'afterSession', 'after',
     'beforeFeature', 'beforeScenario', 'beforeStep', 'afterStep', 'afterScenario', 'afterFeature',
     'onReload', 'onPrepare', 'onComplete'
+]
+
+/**
+ * these services should not be started in worker process
+ */
+export const NON_WORKER_SERVICES = [
+    'chromedriver', 'selenium-standalone', 'appium', 'reportportal', 'firefox-profile'
 ]

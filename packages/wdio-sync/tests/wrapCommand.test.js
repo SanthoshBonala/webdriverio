@@ -16,10 +16,12 @@ describe('wrapCommand:runCommand', () => {
     })
 
     it('should return result', async () => {
+        process.emit('WDIO_TIMER', { id: 0, start: true })
         const fn = jest.fn(x => (x + x))
         const runCommand = wrapCommand('foo', fn)
         const result = await runCommand.call({ options: {} }, 'bar')
         expect(result).toEqual('barbar')
+        process.emit('WDIO_TIMER', { id: 0 })
     })
 
     it('should set _NOT_FIBER to false if elementId is missing', async () => {
@@ -69,41 +71,6 @@ describe('wrapCommand:runCommand', () => {
     it('should set _NOT_FIBER to false function with empty name', async () => {
         Future.prototype.wait = () => {}
         const runCommand = wrapCommand('foo', () => {})
-
-        const context = {
-            options: {}, elementId: 'foo', _hidden_: null, _hidden_changes_: [],
-            get _NOT_FIBER () { return this._hidden_ },
-            set _NOT_FIBER (val) {
-                this._hidden_changes_.push(val)
-                this._hidden_ = val
-            }
-        }
-
-        await runCommand.call(context)
-        expect(context._hidden_changes_).toEqual([false, false])
-    })
-
-    it('should set _NOT_FIBER to false for debug function', async () => {
-        Future.prototype.wait = () => {}
-        const debug = () => {}
-        const runCommand = wrapCommand('foo', debug)
-
-        const context = {
-            options: {}, elementId: 'foo', _hidden_: null, _hidden_changes_: [],
-            get _NOT_FIBER () { return this._hidden_ },
-            set _NOT_FIBER (val) {
-                this._hidden_changes_.push(val)
-                this._hidden_ = val
-            }
-        }
-
-        await runCommand.call(context)
-        expect(context._hidden_changes_).toEqual([false, false])
-    })
-
-    it('should set _NOT_FIBER to false for waitUntil command', async () => {
-        Future.prototype.wait = () => {}
-        const runCommand = wrapCommand('waitUntil', jest.fn())
 
         const context = {
             options: {}, elementId: 'foo', _hidden_: null, _hidden_changes_: [],
@@ -222,6 +189,21 @@ describe('wrapCommand:runCommand', () => {
             }
             expect(context._NOT_FIBER).toBe(false)
             expect.assertions(2)
+        })
+    })
+
+    /**
+     * actual testing is done with smoke tests
+     * only branch coverage here
+     */
+    describe('WDIO_TIMER', () => {
+        it('WDIO_TIMER listener', () => {
+            process.emit('WDIO_TIMER', { id: 1, start: true })
+            process.emit('WDIO_TIMER', { id: 1 })
+
+            process.emit('WDIO_TIMER', { id: 2, start: true })
+            process.emit('WDIO_TIMER', { id: 3, start: true })
+            process.emit('WDIO_TIMER', { id: 2, timeout: true })
         })
     })
 

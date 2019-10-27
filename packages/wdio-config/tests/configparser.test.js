@@ -178,6 +178,15 @@ describe('ConfigParser', () => {
             expect(() => configParser.merge({ exclude: [path.resolve(__dirname, 'foobar.js')] })).toThrow()
         })
 
+        it('should allow specifying a glob pattern for exclude', () => {
+            const configParser = new ConfigParser()
+            configParser.addConfigFile(FIXTURES_CONF)
+            configParser.merge({ spec: [INDEX_PATH, FIXTURES_CONF] })
+            configParser.merge({ exclude: [path.resolve(__dirname) + '/*'] })
+            const specs = configParser.getSpecs()
+            expect(specs).toHaveLength(2)
+        })
+
         it('should overwrite exclude if piped into cli command', () => {
             const configParser = new ConfigParser()
             configParser.addConfigFile(FIXTURES_CONF)
@@ -293,6 +302,15 @@ describe('ConfigParser', () => {
             expect(specs).toContain(path.resolve(FIXTURES_PATH, 'test.es6'))
         })
 
+        it('should include mjs files', () => {
+            const configParser = new ConfigParser()
+            configParser.addConfigFile(FIXTURES_CONF)
+
+            const mjsFile = path.resolve(FIXTURES_PATH, '*.mjs')
+            const specs = configParser.getSpecs([mjsFile])
+            expect(specs).toContain(path.resolve(FIXTURES_PATH, 'test.mjs'))
+        })
+
         it('should not include other file types', () => {
             const configParser = new ConfigParser()
             configParser.addConfigFile(FIXTURES_CONF)
@@ -324,6 +342,24 @@ describe('ConfigParser', () => {
             expect(config.port).toBe(443)
             expect(config.user).toBe('foobar')
             expect(config.key).toBe('50fa142c-3121-4gb0-9p07-8q326vvbq7b0')
+        })
+    })
+
+    describe('filterWorkerServices', () => {
+        const configParser = new ConfigParser()
+        configParser.addConfigFile(FIXTURES_CONF)
+        const config = configParser.getConfig()
+
+        it('should do nothing if services is not an array', () => {
+            config.services = null
+            configParser.filterWorkerServices()
+            expect(config.services).toBeNull()
+        })
+
+        it('should remove non worker services', () => {
+            config.services = ['sauce', 'selenium-standalone']
+            configParser.filterWorkerServices()
+            expect(config.services).toEqual(['sauce'])
         })
     })
 })

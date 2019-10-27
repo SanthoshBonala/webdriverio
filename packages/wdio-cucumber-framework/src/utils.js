@@ -1,5 +1,4 @@
 import * as path from 'path'
-import { executeHooksWithArgs, runFnInFiberContext } from '@wdio/config'
 import { isFunctionAsync } from '@wdio/utils'
 import { CUCUMBER_HOOK_DEFINITION_TYPES } from './constants'
 
@@ -68,15 +67,17 @@ export function getUniqueIdentifier (target, sourceLocation) {
         const line = sourceLocation.line || ''
 
         if (Array.isArray(target.examples)) {
-            target.examples[0].tableHeader.cells.forEach((header, idx) => {
-                if (name.indexOf('<' + header.value + '>') === -1) {
-                    return
-                }
-
-                target.examples[0].tableBody.forEach((tableEntry) => {
-                    if (tableEntry.location.line === sourceLocation.line) {
-                        name = name.replace('<' + header.value + '>', tableEntry.cells[idx].value)
+            target.examples.forEach((example) => {
+                example.tableHeader.cells.forEach((header, idx) => {
+                    if (name.indexOf('<' + header.value + '>') === -1) {
+                        return
                     }
+
+                    example.tableBody.forEach((tableEntry) => {
+                        if (tableEntry.location.line === sourceLocation.line) {
+                            name = name.replace('<' + header.value + '>', tableEntry.cells[idx].value)
+                        }
+                    })
                 })
             })
         }
@@ -148,28 +149,6 @@ export function compareScenarioLineWithSourceLine(scenario, sourceLocation) {
     return scenario.location.line === sourceLocation.line
 }
 
-export function getStepFromFeature(feature, pickle, stepIndex, sourceLocation) {
-    let combinedSteps = []
-    feature.children.forEach((child) => {
-        if (child.type.indexOf('Scenario') > -1 && !compareScenarioLineWithSourceLine(child, sourceLocation)) {
-            return
-        }
-        combinedSteps = combinedSteps.concat(child.steps)
-    })
-    const targetStep = combinedSteps[stepIndex]
-
-    if (targetStep.type === 'Step') {
-        const stepLine = targetStep.location.line
-        const pickleStep = pickle.steps.find(s => s.locations.some(loc => loc.line === stepLine))
-
-        if (pickleStep) {
-            return { ...targetStep, text: pickleStep.text }
-        }
-    }
-
-    return targetStep
-}
-
 /**
  * @param {object[]} result cucumber global result object
  */
@@ -194,65 +173,78 @@ export function setUserHookNames (options) {
 }
 
 /**
- * returns a function that calls first before hook, then user step/hook and finally after hook (even if step has failed)
- * @param {string}      type    Step or Hook
- * @param {Function}    code    step function
- * @param {Function}    before  before hook function
- * @param {Function}    after   after hook function
- * @param {string}      cid     cid
+ * get test case steps
+ * @param   {object}    feature                 cucumber's feature
+ * @param   {object}    scenario                cucumber's scenario
+ * @param   {object}    pickle                  cucumber's pickleEvent
+ * @param   {object}    testCasePreparedEvent   cucumber's testCasePreparedEvent
+ * @returns {object[]}
  */
-export function wrapWithHooks (type, code, before, after, cid) {
-    const userFn = async function (...args) {
-        const { uri, feature } = getDataFromResult(global.result)
+export function getTestCaseSteps (feature, scenario, pickle, testCasePreparedEvent) {
+    const allSteps = getAllSteps(feature, scenario)
 
-        // before hook
-        notifyStepHookError(`Before${type}`, await executeHooksWithArgs(before, [uri, feature]), cid)
+    const steps = testCasePreparedEvent.steps.map(eventStep => {
+        /**
+         * find scenario step matching eventStep
+         */
+        let step = allSteps.find(scenarioStep => {
+            const location = scenarioStep.location || {}
 
-        // step
-        let result
-        let error
-        try {
-            result = await runFnInFiberContext(code.bind(this, ...args))()
-        } catch (err) {
-            error = err
+            // step
+            if (eventStep.sourceLocation && eventStep.sourceLocation.uri === testCasePreparedEvent.sourceLocation.uri) {
+                return typeof location.uri === 'undefined' && eventStep.sourceLocation.line === location.line
+            }
+
+            // hook
+            return eventStep.actionLocation.uri === location.uri && eventStep.actionLocation.line === location.line
+        })
+
+        // set proper text for step
+        if (step && eventStep.sourceLocation) {
+            step = {
+                ...step,
+                text: getStepText(step, pickle)
+            }
         }
 
-        // after
-        notifyStepHookError(`After${type}`, await executeHooksWithArgs(after, [uri, feature, { error, result }]), cid)
-
-        if (error) {
-            throw error
+        // if step was not found `eventStep` is a user defined hook
+        return step ? step : {
+            type: 'Hook',
+            location: { ...eventStep.actionLocation },
+            keyword: 'Hook',
+            text: ''
         }
-        return result
-    }
-    return userFn
+    })
+
+    return steps
 }
 
 /**
- * notify `WDIOCLInterface` about failure in hook
- * we need to do it this way because `beforeStep` and `afterStep` are not real hooks.
- * Otherwise hooks failure are lost.
- * @param {string}  hookName    name of the hook
- * @param {Array}   hookResults hook functions results array
- * @param {string}  cid         cid
+ * get resolved step text for table steps, example:
+ * Then User `<userId>` with `<password>` is logged in
+ * Then User `someUser` with `Password12` is logged in
+ * @param   {object}    step        cucumber's step
+ * @param   {object}    pickle      cucumber's pickleEvent
+ * @returns {string}
  */
-export function notifyStepHookError (hookName, hookResults = [], cid) {
-    const result = hookResults.find(result => result instanceof Error)
-    if (typeof result === 'undefined') {
-        return
+export function getStepText (step, pickle) {
+    const pickleStep = pickle.steps.find(s => s.locations.some(loc => loc.line === step.location.line))
+
+    return pickleStep ? pickleStep.text : step.text
+}
+
+/**
+ * get an array of background and scenario steps
+ * @param {object}      feature cucumber's feature
+ * @param {object}      scenario cucumber's scenario
+ * @returns {object[]}
+ */
+export function getAllSteps (feature, scenario) {
+    const allSteps = []
+    const background = feature.children.find((child) => child.type === 'Background')
+    if (background) {
+        allSteps.push(...background.steps)
     }
-    const content = formatMessage({
-        payload: {
-            cid: cid,
-            error: result,
-            fullTitle: `${hookName} Hook`,
-            type: 'hook',
-            state: 'fail'
-        }
-    })
-    process.send({
-        origin: 'reporter',
-        name: 'printFailureMessage',
-        content
-    })
+    allSteps.push(...scenario.steps)
+    return allSteps
 }

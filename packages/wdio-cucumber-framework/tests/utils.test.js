@@ -1,9 +1,6 @@
-import { executeHooksWithArgs } from '@wdio/config'
-
 import {
     createStepArgument,
     compareScenarioLineWithSourceLine,
-    getStepFromFeature,
     getTestParent,
     formatMessage,
     getUniqueIdentifier,
@@ -11,8 +8,9 @@ import {
     buildStepPayload,
     getDataFromResult,
     setUserHookNames,
-    wrapWithHooks,
-    notifyStepHookError
+    getTestCaseSteps,
+    getStepText,
+    getAllSteps
 } from '../src/utils'
 
 describe('utils', () => {
@@ -93,9 +91,89 @@ describe('utils', () => {
         })
     })
 
-    describe('getStepFromFeature', () => {
-        it('should be ok if targetStep.type is not Step', () => {
-            getStepFromFeature({ children: [{ type: 'Foo', steps: [{ type: 'Bar' }] }] }, null, 0)
+    describe('getStepText', () => {
+        it('should return pickle step text if step was found', () => {
+            const pickle = { steps: [{ locations: [{ line: 1 }], text: '11' }, { locations: [{ line: 1 }, { line: 2 }, { line: 3 }], text: '2' }] }
+            expect(getStepText({ location: { line: 2 } }, pickle)).toEqual('2')
+        })
+
+        it('should return step text if step was not found', () => {
+            const pickle = { steps: [{ locations: [{ line: 1 }], text: '11' }] }
+            expect(getStepText({ location: { line: 2 }, text: 'foo' }, pickle)).toEqual('foo')
+        })
+    })
+
+    describe('getAllSteps', () => {
+        it('should add background steps', () => {
+            const feature = { children: [{ type: 'Background', steps: [1, 2] }, { type: 'Scenario', steps: [3, 4] }] }
+            expect(getAllSteps(feature, { steps: [5, 6] })).toEqual([1, 2, 5, 6])
+        })
+
+        it('should be ok with missing background', () => {
+            const feature = { children: [{ type: 'Scenario', steps: [3, 4] }] }
+            expect(getAllSteps(feature, { steps: [5, 6] })).toEqual([5, 6])
+        })
+    })
+
+    describe('getTestCaseSteps', () => {
+        it('should properly build test case steps array', () => {
+            const feature = {
+                children: [{
+                    type: 'Background', steps: [
+                        { type: 'Step', text: 'Given <browser> is opened', location: { line: 21 } }]
+                }]
+            }
+
+            const scenario = {
+                steps: [
+                    { type: 'Hook', text: '', location: { uri: 'uri', line: 12 } },
+                    { type: 'Step', text: 'Then <user> is logged in', location: { line: 31 } }]
+            }
+
+            const pickle = {
+                steps: [
+                    { locations: [{ line: 21 }], text: 'Given chrome is opened' },
+                    { locations: [{ line: 31 }, { line: 42 }], text: 'Then John is logged in' }]
+            }
+
+            const testCasePreparedEvent = {
+                sourceLocation: { uri: 'feature' }, steps: [
+                    { sourceLocation: { uri: 'uri', line: 12 }, actionLocation: { uri: 'uri', line: 12 } }, // wdio hook
+                    { sourceLocation: { uri: 'feature', line: 21 }, actionLocation: { uri: 'uri', line: 121 } }, // background step
+                    { actionLocation: { uri: 'uri', line: 17 } }, // tagged hook
+                    { sourceLocation: { uri: 'feature', line: 31 }, actionLocation: { uri: 'uri', line: 131 } }, // scenario step
+                ]
+            }
+
+            const steps = getTestCaseSteps(feature, scenario, pickle, testCasePreparedEvent)
+            expect(steps).toEqual([{
+                type: 'Hook',
+                text: '',
+                location: {
+                    uri: 'uri',
+                    line: 12
+                }
+            }, {
+                type: 'Step',
+                text: 'Given chrome is opened',
+                location: {
+                    line: 21
+                }
+            }, {
+                type: 'Hook',
+                location: {
+                    uri: 'uri',
+                    line: 17
+                },
+                keyword: 'Hook',
+                text: ''
+            }, {
+                type: 'Step',
+                text: 'Then John is logged in',
+                location: {
+                    line: 31
+                }
+            }])
         })
     })
 
@@ -148,22 +226,35 @@ describe('utils', () => {
         it('ScenarioOutline with <>', () => {
             expect(getUniqueIdentifier({
                 type: 'ScenarioOutline',
-                name: '<someval> here',
+                name: '<someval2> here',
                 examples: [{
                     tableHeader: {
                         cells: [
-                            { value: 'valsome' },
-                            { value: 'someval' }
+                            { value: 'valsome1' },
+                            { value: 'someval1' }
                         ]
                     },
                     tableBody: [{
                         location: { line: 54 }
                     }, {
                         location: { line: 123 },
-                        cells: [{}, { value: 'realval' }]
+                        cells: [{}, { value: 'realval1' }]
+                    }]
+                }, {
+                    tableHeader: {
+                        cells: [
+                            { value: 'valsome2' },
+                            { value: 'someval2' }
+                        ]
+                    },
+                    tableBody: [{
+                        location: { line: 64 }
+                    }, {
+                        location: { line: 234 },
+                        cells: [{}, { value: 'realval2' }]
                     }]
                 }]
-            }, { line: 123 })).toBe('realval here123')
+            }, { line: 234 })).toBe('realval2 here234')
         })
     })
 
@@ -218,77 +309,6 @@ describe('utils', () => {
                 expect(wdioHooks).toHaveLength(1)
                 expect(userHooks).toHaveLength(1)
                 expect(userAsyncHooks).toHaveLength(1)
-            })
-        })
-    })
-
-    describe('wrapStepWithHooks', () => {
-        it('should wrap step with before/after hooks and return result', async () => {
-            global.wrapStepWithHooksCounter = 0
-            global.result = [{ uri: 'uri' }, 'feature', 'scenario1', 'scenario2']
-            executeHooksWithArgs.mockImplementation(() => new Promise(resolve => setTimeout(() => {
-                global.wrapStepWithHooksCounter++
-                resolve()
-            }, 20)))
-            const code = jest.fn().mockImplementation((...args) => {
-                global.wrapStepWithHooksCounter++
-                return [...args, global.wrapStepWithHooksCounter]
-            })
-            const { beforeStep, afterStep } = {
-                beforeStep: jest.fn(),
-                afterStep: jest.fn()
-            }
-            const wrappedFn = wrapWithHooks(false, code, beforeStep, afterStep)
-            const result = await wrappedFn('foo', 'bar')
-
-            expect(global.wrapStepWithHooksCounter).toEqual(3)
-            expect(executeHooksWithArgs.mock.calls[0]).toEqual([beforeStep, ['uri', 'feature']])
-            expect(executeHooksWithArgs.mock.calls[1]).toEqual([afterStep, ['uri', 'feature', { result: ['foo', 'bar', 2], error: undefined }]])
-            expect(result).toEqual(['foo', 'bar', 2])
-        })
-
-        it('should wrap step with before/after hooks and throw error', async () => {
-            global.result = [{ uri: 'uri' }, 'feature', 'scenario1', 'scenario2']
-            const code = jest.fn().mockImplementation((...args) => { throw new Error(args.join(', ')) })
-            const { beforeStep, afterStep } = {
-                beforeStep: jest.fn(),
-                afterStep: jest.fn()
-            }
-            const wrappedFn = wrapWithHooks(true, code, beforeStep, afterStep )
-            let error
-            try {
-                await wrappedFn('foo', 'bar')
-            } catch (err) {
-                error = err
-            }
-
-            expect(executeHooksWithArgs.mock.calls[0]).toEqual([beforeStep, ['uri', 'feature']])
-            expect(executeHooksWithArgs.mock.calls[1]).toEqual([afterStep, ['uri', 'feature', { result: undefined, error: expect.objectContaining({ message: 'foo, bar' }) }]])
-            expect(error.message).toBe('foo, bar')
-        })
-        afterEach(() => {
-            delete global.wrapStepWithHooksCounter
-            delete global.result
-            executeHooksWithArgs.mockClear()
-            executeHooksWithArgs.mockReset()
-        })
-    })
-
-    describe('notifyStepHookError', () => {
-        it('should send message if there is Error in results', () => {
-            const pSend = jest.spyOn(process, 'send')
-            notifyStepHookError('BeforeStep', [undefined, true, new Error('foobar')], '0-1')
-            expect(pSend).toBeCalledTimes(1)
-            expect(pSend).toBeCalledWith({
-                name: 'printFailureMessage',
-                origin: 'reporter',
-                content: {
-                    cid: '0-1',
-                    fullTitle: 'BeforeStep Hook',
-                    state: 'fail',
-                    type: 'hook',
-                    error: expect.objectContaining({ name: 'Error', message: 'foobar' }),
-                },
             })
         })
     })

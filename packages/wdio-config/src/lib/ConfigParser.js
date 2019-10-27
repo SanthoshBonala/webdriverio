@@ -7,7 +7,7 @@ import logger from '@wdio/logger'
 
 import { detectBackend } from '../utils'
 
-import { DEFAULT_CONFIGS, SUPPORTED_HOOKS } from '../constants'
+import { DEFAULT_CONFIGS, SUPPORTED_HOOKS, NON_WORKER_SERVICES } from '../constants'
 
 const log = logger('@wdio/config:ConfigParser')
 const MERGE_OPTIONS = { clone: false }
@@ -65,6 +65,11 @@ export default class ConfigParser {
              * detect Selenium backend
              */
             this._config = merge(detectBackend(this._config, isRDC), this._config, MERGE_OPTIONS)
+
+            /**
+             * remove `watch` from config as far as it can be only passed as command line argument
+             */
+            delete this._config.watch
         } catch (e) {
             log.error(`Failed loading configuration file: ${filePath}:`, e.message)
             throw e
@@ -214,8 +219,11 @@ export default class ConfigParser {
         const filesToFilter = new Set()
         const fileList = ConfigParser.getFilePaths(config)
         cliArgFileList.forEach(filteredFile => {
+            let globMatchedFiles = ConfigParser.getFilePaths(glob.sync(filteredFile))
             if (fs.existsSync(filteredFile) && fs.lstatSync(filteredFile).isFile()) {
                 filesToFilter.add(path.resolve(process.cwd(), filteredFile))
+            } else if (globMatchedFiles.length) {
+                globMatchedFiles.forEach(file => filesToFilter.add(file))
             } else {
                 fileList.forEach(file => {
                     if (file.match(filteredFile)) {
@@ -270,6 +278,7 @@ export default class ConfigParser {
 
             filenames = filenames.filter(filename =>
                 filename.slice(-3) === '.js' ||
+                filename.slice(-4) === '.mjs' ||
                 filename.slice(-4) === '.es6' ||
                 filename.slice(-3) === '.ts' ||
                 filename.slice(-8) === '.feature' ||
@@ -286,5 +295,17 @@ export default class ConfigParser {
         }
 
         return files
+    }
+
+    /**
+     * remove services that has nothing to do in worker
+     */
+    filterWorkerServices () {
+        if (!Array.isArray(this._config.services)) {
+            return
+        }
+        this._config.services = this._config.services.filter((service) => {
+            return !NON_WORKER_SERVICES.includes(service)
+        })
     }
 }

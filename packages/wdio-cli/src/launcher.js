@@ -9,20 +9,22 @@ import { initialisePlugin, initialiseServices } from '@wdio/utils'
 import CLInterface from './interface'
 import { runOnPrepareHook, runOnCompleteHook, runServiceHook } from './utils'
 
-const log = logger('@wdio/cli:Launcher')
+const log = logger('@wdio/cli:launcher')
 
 class Launcher {
-    constructor (configFile, argv = {}, isWatchMode = false) {
+    constructor (configFilePath, argv = {}, isWatchMode = false) {
         this.argv = argv
-        this.configFile = configFile
+        this.configFilePath = configFilePath
 
         this.configParser = new ConfigParser()
-        this.configParser.addConfigFile(configFile)
+        this.configParser.addConfigFile(configFilePath)
         this.configParser.merge(argv)
 
         const config = this.configParser.getConfig()
         const capabilities = this.configParser.getCapabilities()
         const specs = this.configParser.getSpecs()
+
+        this.isWatchMode = isWatchMode
 
         if (config.outputDir) {
             fs.ensureDirSync(path.join(config.outputDir))
@@ -38,9 +40,9 @@ class Launcher {
             : 1
 
         const Runner = initialisePlugin(config.runner, 'runner')
-        this.runner = new Runner(configFile, config)
+        this.runner = new Runner(configFilePath, config)
 
-        this.interface = new CLInterface(config, specs, totalWorkerCnt, isWatchMode)
+        this.interface = new CLInterface(config, specs, totalWorkerCnt, this.isWatchMode)
         config.runnerEnv.FORCE_COLOR = Number(this.interface.hasAnsiSupport)
 
         this.isMultiremote = !Array.isArray(capabilities)
@@ -132,7 +134,7 @@ class Launcher {
         /**
          * avoid retries in watch mode
          */
-        const specFileRetries = config.watch ? 0 : config.specFileRetries
+        const specFileRetries = this.isWatchMode ? 0 : config.specFileRetries
 
         /**
          * schedule test runs
@@ -327,7 +329,7 @@ class Launcher {
         const worker = this.runner.run({
             cid,
             command: 'run',
-            configFile: this.configFile,
+            configFile: this.configFilePath,
             argv: this.argv,
             caps,
             specs,
@@ -363,15 +365,21 @@ class Launcher {
      * @param  {Number} retries   Number or retries remaining
      */
     endHandler ({ cid, exitCode, specs, retries }) {
-        const passed = exitCode === 0
+        const passed = this.isWatchModeHalted() || exitCode === 0
 
         if (!passed && retries > 0) {
             this.schedule[parseInt(cid)].specs.push({ files: specs, retries: retries - 1, rid: cid })
         } else {
-            this.exitCode = this.exitCode || exitCode
+            this.exitCode = this.isWatchModeHalted() ? 0 : this.exitCode || exitCode
             this.runnerFailed += !passed ? 1 : 0
         }
-        this.interface.emit('job:end', { cid, passed, retries })
+
+        /**
+         * avoid emitting job:end if watch mode has been stopped by user
+         */
+        if (!this.isWatchModeHalted()) {
+            this.interface.emit('job:end', { cid, passed, retries })
+        }
 
         /**
          * Update schedule now this process has ended
@@ -382,7 +390,13 @@ class Launcher {
         this.schedule[cid].availableInstances++
         this.schedule[cid].runningInstances--
 
-        if (!this.runSpecs()) {
+        /**
+         * do nothing if
+         * - there are specs to be executed
+         * - we are running watch mode
+         */
+        const shouldRunSpecs = this.runSpecs()
+        if (!shouldRunSpecs || (this.isWatchMode && !this.hasTriggeredExitRoutine)) {
             return
         }
 
@@ -407,6 +421,14 @@ class Launcher {
         this.hasTriggeredExitRoutine = true
         this.interface.sigintTrigger()
         return this.runner.shutdown().then(callback)
+    }
+
+    /**
+     * returns true if user stopped watch mode, ex with ctrl+c
+     * @returns {boolean}
+     */
+    isWatchModeHalted () {
+        return this.isWatchMode && this.hasTriggeredExitRoutine
     }
 }
 

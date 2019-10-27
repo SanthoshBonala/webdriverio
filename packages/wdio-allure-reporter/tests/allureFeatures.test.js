@@ -11,6 +11,22 @@ afterAll(() => {
 })
 
 describe('reporter runtime implementation', () => {
+    it('should correct add custom label', () => {
+        const reporter = new AllureReporter({ stdout: true })
+        const addLabel = jest.fn()
+        const mock = jest.fn(() => {
+            return { addLabel }
+        })
+        reporter.allure = {
+            getCurrentSuite: mock,
+            getCurrentTest: mock,
+        }
+
+        reporter.addLabel('customLabel', 'Label')
+        expect(addLabel).toHaveBeenCalledTimes(1)
+        expect(addLabel).toHaveBeenCalledWith('customLabel', 'Label')
+    })
+
     it('should correct add story label', () => {
         const reporter = new AllureReporter({ stdout: true })
         const addLabel = jest.fn()
@@ -20,7 +36,6 @@ describe('reporter runtime implementation', () => {
         reporter.allure = {
             getCurrentSuite: mock,
             getCurrentTest: mock,
-
         }
 
         reporter.addStory({ storyName: 'foo' })
@@ -244,6 +259,7 @@ describe('reporter runtime implementation', () => {
 
     it('should do nothing if no tests run', () => {
         const reporter = new AllureReporter({ stdout: true })
+        expect(reporter.addLabel()).toEqual(false)
         expect(reporter.addStory({})).toEqual(false)
         expect(reporter.addFeature({})).toEqual(false)
         expect(reporter.addSeverity({})).toEqual(false)
@@ -278,14 +294,14 @@ describe('reporter runtime implementation', () => {
         })
 
         it('should correctly add argument for selenium', () => {
-            reporter.onRunnerStart({ config: { capabilities: { browserName: 'firefox', version: '1.2.3' } } })
+            reporter.onRunnerStart({ config: { }, capabilities: { browserName: 'firefox', version: '1.2.3' } })
             reporter.onTestStart({ cid: '0-0', title: 'SomeTest' })
             expect(addParameter).toHaveBeenCalledTimes(1)
             expect(addParameter).toHaveBeenCalledWith('argument', 'browser', 'firefox-1.2.3')
         })
 
         it('should correctly add argument for appium', () => {
-            reporter.onRunnerStart({ config: { capabilities: { deviceName: 'Android Emulator', platformVersion: '8.0' } } })
+            reporter.onRunnerStart({ config: { }, capabilities: { deviceName: 'Android Emulator', platformVersion: '8.0' } })
             reporter.onTestStart({ cid: '0-0', title: 'SomeTest' })
             expect(addParameter).toHaveBeenCalledTimes(1)
             expect(addParameter).toHaveBeenCalledWith('argument', 'device', 'Android Emulator-8.0')

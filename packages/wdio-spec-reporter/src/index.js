@@ -1,13 +1,7 @@
 import WDIOReporter from '@wdio/reporter'
 import chalk from 'chalk'
 import prettyMs from 'pretty-ms'
-import { table, getBorderCharacters } from 'table'
-
-export const DATA_TABLE_CONFIG = {
-    singleLine: true,
-    drawHorizontalLine: () => false,
-    border: getBorderCharacters('norc')
-}
+import { buildTableData, printTable, getFormattedRows } from './utils'
 
 class SpecReporter extends WDIOReporter {
     constructor (options) {
@@ -149,14 +143,12 @@ class SpecReporter extends WDIOReporter {
     getEventsToReport (suite) {
         return [
             /**
-             * report all tests
+             * report all tests and only hooks that failed
              */
-            ...suite.tests,
-            /**
-             * and only hooks that failed
-             */
-            ...suite.hooks
-                .filter((hook) => Boolean(hook.error))
+            ...suite.hooksAndTests
+                .filter((item) => {
+                    return item.type === 'test' || Boolean(item.error)
+                })
         ]
     }
 
@@ -192,12 +184,10 @@ class SpecReporter extends WDIOReporter {
 
                 // print cucumber data table cells
                 if (test.argument && test.argument.rows && test.argument.rows.length) {
-                    const cells = test.argument.rows.map((row) => row.cells)
-                    output.push(...table(cells, DATA_TABLE_CONFIG)
-                        .split('\n')
-                        .filter(Boolean)
-                        .map((line) => `${testIndent}  ${line}`)
-                    )
+                    const data = buildTableData(test.argument.rows)
+                    const rawTable = printTable(data)
+                    const table = getFormattedRows(rawTable, testIndent)
+                    output.push(...table)
                 }
             }
 
